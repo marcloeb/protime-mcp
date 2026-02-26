@@ -16,7 +16,7 @@ import { AppError, AuthenticationError } from './utils/errors.js';
 import tools from './tools/index.js';
 import { handleToolCall } from './handlers/toolRouter.js';
 import { requireAuth, createJWT } from './middleware/auth.js';
-import { apiLimiter } from './middleware/rateLimit.js';
+import { apiLimiter, checkMcpRateLimit } from './middleware/rateLimit.js';
 import { User } from './types/user.js';
 import jwt from 'jsonwebtoken';
 import { auth, collections, firestore } from './api/firebase.js';
@@ -675,6 +675,20 @@ async function runHttpMode(): Promise<void> {
       res.status(401).json({
         jsonrpc: '2.0',
         error: { code: -32001, message: 'Invalid authentication token' },
+        id: null,
+      });
+      return;
+    }
+
+    // Rate limit check (per-user, tier-based)
+    const rateCheck = checkMcpRateLimit(user);
+    if (!rateCheck.allowed) {
+      res.status(429).json({
+        jsonrpc: '2.0',
+        error: {
+          code: -32000,
+          message: `Rate limit exceeded (${rateCheck.limit} requests/minute for ${user.tier} tier)`,
+        },
         id: null,
       });
       return;

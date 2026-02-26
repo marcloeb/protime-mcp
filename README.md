@@ -193,4 +193,4 @@ protime-mcp/
 
 ## Concept Document
 
-Full strategy, architecture, and roadmap: [`docs/PROTIME_MCP_CONCEPT.md`](../docs/PROTIME_MCP_CONCEPT.md)
+Full strategy, architecture, and roadmap: [`docs/PROTIME_MCP_CONCEPT.md`](./docs/PROTIME_MCP_CONCEPT.md)
