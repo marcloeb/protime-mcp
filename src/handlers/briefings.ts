@@ -1,6 +1,7 @@
 // Briefing Handlers - Business logic for briefing operations
+// Briefings are stored as subcollections: users/{userId}/briefings/{briefingId}
 
-import { collections } from '../api/firebase.js';
+import { userBriefings } from '../api/firebase.js';
 import {
   Briefing,
   CreateBriefingRequest,
@@ -21,10 +22,11 @@ export async function createBriefing(
 ): Promise<Briefing> {
   logger.info('Creating briefing', { userId: user.id, topic: request.topic });
 
+  const briefingsRef = userBriefings(user.id);
+
   // Check tier limits
-  const existingBriefings = await collections.briefings
-    .where('userId', '==', user.id)
-    .where('active', '==', true)
+  const existingBriefings = await briefingsRef
+    .where('archived', '==', false)
     .get();
 
   const limits = user.tier === 'free' ? FREE_TIER_LIMITS : PRO_TIER_LIMITS;
@@ -35,8 +37,8 @@ export async function createBriefing(
     );
   }
 
-  // Create briefing - generate ID using Firestore
-  const briefingRef = collections.briefings.doc();
+  // Create briefing
+  const briefingRef = briefingsRef.doc();
   const briefingId = briefingRef.id;
   const now = new Date();
 
@@ -45,7 +47,7 @@ export async function createBriefing(
     userId: user.id,
     topic: request.topic,
     description: request.description,
-    schedule: 'weekly', // Default to weekly for free tier
+    schedule: 'weekly',
     sources: [],
     categories: [],
     active: true,
@@ -54,13 +56,8 @@ export async function createBriefing(
   };
 
   await briefingRef.set({
-    userId: briefing.userId,
-    topic: briefing.topic,
-    description: briefing.description,
-    schedule: briefing.schedule,
-    sources: briefing.sources,
-    categories: briefing.categories,
-    active: briefing.active,
+    title: briefing.topic,
+    archived: false,
     createdAt: now.toISOString(),
     updatedAt: now.toISOString(),
   });
@@ -77,22 +74,31 @@ export async function getBriefings(
 ): Promise<Briefing[]> {
   logger.debug('Fetching briefings', { userId: user.id, limit, offset });
 
-  const snapshot = await collections.briefings
-    .where('userId', '==', user.id)
-    .orderBy('createdAt', 'desc')
+  const briefingsRef = userBriefings(user.id);
+
+  // Fetch all briefings (including archived), sorted client-side
+  const snapshot = await briefingsRef
     .limit(limit)
-    .offset(offset)
     .get();
 
   const briefings: Briefing[] = snapshot.docs.map((doc) => {
     const data = doc.data();
     return {
-      ...data,
       id: doc.id,
-      createdAt: new Date(data.createdAt),
-      updatedAt: new Date(data.updatedAt),
-      lastRunAt: data.lastRunAt ? new Date(data.lastRunAt) : undefined,
-      nextRunAt: data.nextRunAt ? new Date(data.nextRunAt) : undefined,
+      userId: user.id,
+      topic: data.title || data.topic || '(untitled)',
+      description: data.description,
+      schedule: data.settings?.schedule?.frequency || data.schedule || 'unknown',
+      sources: data.sources || [],
+      categories: data.categories || [],
+      active: !data.archived,
+      createdAt: data.createdAt?.toDate ? data.createdAt.toDate() : new Date(data.createdAt),
+      updatedAt: data.updatedAt?.toDate ? data.updatedAt.toDate() : new Date(data.updatedAt),
+      // Extra fields from real schema
+      title: data.title,
+      imageUrl: data.imageUrl,
+      issueCount: data.issueCount || 0,
+      lastIssueNumber: data.lastIssueNumber || 0,
     } as Briefing;
   });
 
@@ -107,49 +113,26 @@ export async function getBriefingConfig(
 ): Promise<BriefingConfig> {
   logger.debug('Fetching briefing config', { briefingId, userId: user.id });
 
-  const doc = await collections.briefings.doc(briefingId).get();
+  const doc = await userBriefings(user.id).doc(briefingId).get();
 
   if (!doc.exists) {
     throw new NotFoundError('Briefing');
   }
 
-  const briefing = doc.data() as Briefing;
-
-  // Verify ownership
-  if (briefing.userId !== user.id) {
-    throw new AuthorizationError('You do not have access to this briefing');
-  }
-
-  // Get edition stats
-  const editionsSnapshot = await collections.editions
-    .where('briefingId', '==', briefingId)
-    .orderBy('generatedAt', 'desc')
-    .limit(1)
-    .get();
-
-  const totalEditionsSnapshot = await collections.editions
-    .where('briefingId', '==', briefingId)
-    .count()
-    .get();
-
-  const lastEdition = editionsSnapshot.empty
-    ? undefined
-    : editionsSnapshot.docs[0].data();
+  const data = doc.data()!;
 
   const config: BriefingConfig = {
-    briefingId: briefing.id,
-    topic: briefing.topic,
-    description: briefing.description,
-    schedule: briefing.schedule,
-    sources: briefing.sources,
-    categories: briefing.categories,
-    active: briefing.active,
+    briefingId: doc.id,
+    topic: data.title || data.topic || '(untitled)',
+    description: data.description,
+    schedule: data.settings?.schedule?.frequency || data.schedule || 'unknown',
+    sources: data.sources || [],
+    categories: data.categories || [],
+    active: !data.archived,
     stats: {
-      totalEditions: totalEditionsSnapshot.data().count,
-      lastEditionDate: lastEdition?.generatedAt
-        ? new Date(lastEdition.generatedAt)
-        : undefined,
-      totalSummaries: lastEdition?.summaryCount || 0,
+      totalEditions: data.issueCount || data.lastIssueNumber || 0,
+      lastEditionDate: data.lastRun?.toDate ? data.lastRun.toDate() : undefined,
+      totalSummaries: 0,
     },
   };
 
@@ -163,17 +146,11 @@ export async function updateBriefing(
 ): Promise<void> {
   logger.info('Updating briefing', { briefingId, userId: user.id, updates });
 
-  const doc = await collections.briefings.doc(briefingId).get();
+  const briefingRef = userBriefings(user.id).doc(briefingId);
+  const doc = await briefingRef.get();
 
   if (!doc.exists) {
     throw new NotFoundError('Briefing');
-  }
-
-  const briefing = doc.data() as Briefing;
-
-  // Verify ownership
-  if (briefing.userId !== user.id) {
-    throw new AuthorizationError('You do not have access to this briefing');
   }
 
   // Check tier limits for daily schedule
@@ -191,14 +168,13 @@ export async function updateBriefing(
     updatedAt: new Date().toISOString(),
   };
 
-  if (updates.schedule) updateData.schedule = updates.schedule;
+  if (updates.schedule) updateData['settings.schedule.frequency'] = updates.schedule;
   if (updates.categories) updateData.categories = updates.categories;
-  if (updates.active !== undefined) updateData.active = updates.active;
+  if (updates.active !== undefined) updateData.archived = !updates.active;
 
-  // Handle sources update (convert URLs to Source objects)
   if (updates.sources) {
     updateData.sources = updates.sources.map((url) => ({
-      id: collections.briefings.doc().id,
+      id: userBriefings(user.id).doc().id,
       type: url.includes('/feed') || url.includes('/rss') ? 'rss' : 'newsletter',
       url,
       name: extractNameFromUrl(url),
@@ -206,7 +182,7 @@ export async function updateBriefing(
     }));
   }
 
-  await collections.briefings.doc(briefingId).update(updateData);
+  await briefingRef.update(updateData);
 
   logger.info('Briefing updated', { briefingId });
 }
@@ -217,36 +193,20 @@ export async function deleteBriefing(
 ): Promise<void> {
   logger.info('Deleting briefing', { briefingId, userId: user.id });
 
-  const doc = await collections.briefings.doc(briefingId).get();
+  const briefingRef = userBriefings(user.id).doc(briefingId);
+  const doc = await briefingRef.get();
 
   if (!doc.exists) {
     throw new NotFoundError('Briefing');
   }
 
-  const briefing = doc.data();
+  // Soft delete: mark as archived
+  await briefingRef.update({
+    archived: true,
+    updatedAt: new Date().toISOString(),
+  });
 
-  // Verify ownership
-  if (briefing!.userId !== user.id) {
-    throw new AuthorizationError('You do not have access to this briefing');
-  }
-
-  // Delete briefing
-  await collections.briefings.doc(briefingId).delete();
-
-  // Delete all editions (async, don't wait)
-  collections.editions
-    .where('briefingId', '==', briefingId)
-    .get()
-    .then((snapshot) => {
-      const batch = collections.editions.firestore.batch();
-      snapshot.docs.forEach((doc) => batch.delete(doc.ref));
-      return batch.commit();
-    })
-    .catch((error) => {
-      logger.error('Failed to delete editions', { briefingId, error });
-    });
-
-  logger.info('Briefing deleted', { briefingId });
+  logger.info('Briefing archived', { briefingId });
 }
 
 // Helper functions

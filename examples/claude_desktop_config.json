@@ -1,0 +1,15 @@
+{
+  "mcpServers": {
+    "protime": {
+      "command": "node",
+      "args": ["/path/to/protime-mcp/dist/index.js", "--stdio"],
+      "env": {
+        "STDIO_USER_ID": "your-firebase-user-id",
+        "STDIO_USER_EMAIL": "your@email.com",
+        "STDIO_USER_TIER": "pro",
+        "FIREBASE_PROJECT_ID": "protime-summi",
+        "FIREBASE_SERVICE_ACCOUNT_KEY_PATH": "/path/to/service-account-key.json"
+      }
+    }
+  }
+}

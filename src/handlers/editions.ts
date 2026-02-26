@@ -1,6 +1,7 @@
 // Edition Handlers - Business logic for viewing briefing editions
+// Editions are stored as subcollections: users/{userId}/briefings/{briefingId}/editions/{editionId}
 
-import { collections } from '../api/firebase.js';
+import { userBriefings, userEditions } from '../api/firebase.js';
 import {
   Edition,
   EditionContent,
@@ -9,7 +10,6 @@ import {
 import { User, FREE_TIER_LIMITS, PRO_TIER_LIMITS } from '../types/user.js';
 import {
   NotFoundError,
-  AuthorizationError,
   TierLimitError,
 } from '../utils/errors.js';
 import logger from '../utils/logger.js';
@@ -21,15 +21,10 @@ export async function getEditions(
 ): Promise<Edition[]> {
   logger.debug('Fetching editions', { briefingId, userId: user.id, limit });
 
-  // Verify briefing ownership
-  const briefingDoc = await collections.briefings.doc(briefingId).get();
+  // Verify briefing exists (ownership is implicit via subcollection path)
+  const briefingDoc = await userBriefings(user.id).doc(briefingId).get();
   if (!briefingDoc.exists) {
     throw new NotFoundError('Briefing');
-  }
-
-  const briefing = briefingDoc.data();
-  if (briefing!.userId !== user.id) {
-    throw new AuthorizationError('You do not have access to this briefing');
   }
 
   // Check tier limits for edition history
@@ -44,10 +39,8 @@ export async function getEditions(
     });
   }
 
-  // Fetch editions
-  const snapshot = await collections.editions
-    .where('briefingId', '==', briefingId)
-    .where('status', '==', 'completed')
+  // Fetch editions from subcollection
+  const snapshot = await userEditions(user.id, briefingId)
     .orderBy('generatedAt', 'desc')
     .limit(effectiveLimit)
     .get();
@@ -56,10 +49,10 @@ export async function getEditions(
     const data = doc.data();
     return {
       id: doc.id,
-      briefingId: data.briefingId,
-      generatedAt: new Date(data.generatedAt),
-      status: data.status,
-      summaryCount: data.summaryCount || 0,
+      briefingId,
+      generatedAt: data.generatedAt?.toDate ? data.generatedAt.toDate() : new Date(data.generatedAt),
+      status: data.status || 'completed',
+      summaryCount: data.summaryCount || data.articleCount || 0,
       tokenUsage: data.tokenUsage || 0,
     };
   });
@@ -74,72 +67,73 @@ export async function getEditions(
 
 export async function getEditionContent(
   user: User,
-  editionId: string
+  editionId: string,
+  briefingId?: string
 ): Promise<EditionContent> {
-  logger.debug('Fetching edition content', { editionId, userId: user.id });
+  logger.debug('Fetching edition content', { editionId, userId: user.id, briefingId });
 
-  // Fetch edition
-  const editionDoc = await collections.editions.doc(editionId).get();
-  if (!editionDoc.exists) {
-    throw new NotFoundError('Edition');
+  // If briefingId is provided, use direct subcollection path
+  if (briefingId) {
+    const editionDoc = await userEditions(user.id, briefingId).doc(editionId).get();
+
+    if (!editionDoc.exists) {
+      throw new NotFoundError('Edition');
+    }
+
+    return buildEditionContent(editionDoc.id, briefingId, editionDoc.data()!);
   }
 
-  const editionData = editionDoc.data()!;
-
-  // Verify briefing ownership
-  const briefingDoc = await collections.briefings
-    .doc(editionData.briefingId)
+  // Without briefingId, we need to search across all briefings
+  // First get all user briefings, then check each for the edition
+  const briefingsSnapshot = await userBriefings(user.id)
+    .where('archived', '==', false)
     .get();
 
-  if (!briefingDoc.exists) {
-    throw new NotFoundError('Briefing');
+  for (const briefingDoc of briefingsSnapshot.docs) {
+    const editionDoc = await userEditions(user.id, briefingDoc.id).doc(editionId).get();
+    if (editionDoc.exists) {
+      return buildEditionContent(editionDoc.id, briefingDoc.id, editionDoc.data()!);
+    }
   }
 
-  const briefing = briefingDoc.data()!;
-  if (briefing.userId !== user.id) {
-    throw new AuthorizationError('You do not have access to this edition');
-  }
+  throw new NotFoundError('Edition');
+}
 
-  // Parse edition content
+function buildEditionContent(
+  editionId: string,
+  briefingId: string,
+  data: FirebaseFirestore.DocumentData
+): EditionContent {
   const edition: Edition = {
-    id: editionDoc.id,
-    briefingId: editionData.briefingId,
-    generatedAt: new Date(editionData.generatedAt),
-    status: editionData.status,
-    summaryCount: editionData.summaryCount || 0,
-    tokenUsage: editionData.tokenUsage || 0,
+    id: editionId,
+    briefingId,
+    generatedAt: data.generatedAt?.toDate ? data.generatedAt.toDate() : new Date(data.generatedAt),
+    status: data.status || 'completed',
+    summaryCount: data.summaryCount || data.articleCount || 0,
+    tokenUsage: data.tokenUsage || 0,
   };
 
-  // Get categorized summaries
-  const categories: CategorySummary[] = editionData.categories || [];
+  const categories: CategorySummary[] = data.categories || [];
 
-  const content: EditionContent = {
-    id: editionDoc.id,
-    briefingId: editionData.briefingId,
+  return {
+    id: editionId,
+    briefingId,
     edition,
     categories: categories.map((cat: any) => ({
-      category: cat.category,
-      count: cat.summaries?.length || 0,
-      summaries: (cat.summaries || []).map((summary: any) => ({
+      category: cat.category || cat.name,
+      count: cat.summaries?.length || cat.articles?.length || 0,
+      summaries: (cat.summaries || cat.articles || []).map((summary: any) => ({
         id: summary.id,
         title: summary.title,
-        content: summary.content,
+        content: summary.content || summary.summary,
         source: summary.source,
-        url: summary.url,
+        url: summary.url || summary.link,
         publishedAt: summary.publishedAt
           ? new Date(summary.publishedAt)
           : undefined,
         tags: summary.tags || [],
       })),
     })),
-    rawContent: editionData.rawContent,
+    rawContent: data.rawContent || data.htmlContent,
   };
-
-  logger.debug('Fetched edition content', {
-    editionId,
-    categoryCount: categories.length,
-    summaryCount: edition.summaryCount,
-  });
-
-  return content;
 }

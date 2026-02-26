@@ -1,7 +1,7 @@
 // MCP Server Factory — creates a configured McpServer with all tools registered
 // Uses the official @modelcontextprotocol/sdk v1
 
-import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
+import { McpServer, ResourceTemplate } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
 import { User } from "./types/user.js";
 import logger from "./utils/logger.js";
@@ -731,6 +731,199 @@ export function createMcpServer(getUser: () => User | null): McpServer {
         });
         return errorContent(`Failed to chat with content: ${message}`);
       }
+    }
+  );
+
+  // =========================================================================
+  // MCP Resources (4)
+  // =========================================================================
+
+  // 1. Static resource: list all user briefings
+  server.resource(
+    "briefings-list",
+    "protime://briefings",
+    { description: "List all user briefings with id, topic, schedule, source count, and status" },
+    async (uri) => {
+      const user = requireUser(getUser);
+      if (!user) {
+        return {
+          contents: [{
+            uri: uri.href,
+            mimeType: "application/json",
+            text: JSON.stringify({ error: "Not authenticated" }),
+          }],
+        };
+      }
+
+      try {
+        const briefings = await getBriefings(user, 50, 0);
+        const data = briefings.map((b) => ({
+          id: b.id,
+          topic: b.topic,
+          schedule: b.schedule,
+          sourceCount: b.sources.length,
+          active: b.active,
+        }));
+        return {
+          contents: [{
+            uri: uri.href,
+            mimeType: "application/json",
+            text: JSON.stringify(data, null, 2),
+          }],
+        };
+      } catch (error: unknown) {
+        const message = error instanceof Error ? error.message : String(error);
+        logger.error("resource briefings-list failed", { error: message, userId: user.id });
+        return {
+          contents: [{
+            uri: uri.href,
+            mimeType: "application/json",
+            text: JSON.stringify({ error: `Failed to list briefings: ${message}` }),
+          }],
+        };
+      }
+    }
+  );
+
+  // 2. Resource template: detailed briefing config by ID
+  server.resource(
+    "briefing-detail",
+    new ResourceTemplate("protime://briefings/{briefingId}", { list: undefined }),
+    { description: "Detailed briefing configuration including sources, categories, schedule, and delivery settings" },
+    async (uri, { briefingId }) => {
+      const user = requireUser(getUser);
+      if (!user) {
+        return {
+          contents: [{
+            uri: uri.href,
+            mimeType: "application/json",
+            text: JSON.stringify({ error: "Not authenticated" }),
+          }],
+        };
+      }
+
+      try {
+        const config = await getBriefingConfig(user, briefingId as string);
+        return {
+          contents: [{
+            uri: uri.href,
+            mimeType: "application/json",
+            text: JSON.stringify(config, null, 2),
+          }],
+        };
+      } catch (error: unknown) {
+        const message = error instanceof Error ? error.message : String(error);
+        logger.error("resource briefing-detail failed", {
+          error: message,
+          userId: user.id,
+          briefingId,
+        });
+        return {
+          contents: [{
+            uri: uri.href,
+            mimeType: "application/json",
+            text: JSON.stringify({ error: `Briefing not found or access denied: ${message}` }),
+          }],
+        };
+      }
+    }
+  );
+
+  // 3. Resource template: latest edition content for a briefing
+  server.resource(
+    "briefing-latest-edition",
+    new ResourceTemplate("protime://briefings/{briefingId}/latest", { list: undefined }),
+    { description: "The most recent edition content for a briefing, including all categories and article summaries" },
+    async (uri, { briefingId }) => {
+      const user = requireUser(getUser);
+      if (!user) {
+        return {
+          contents: [{
+            uri: uri.href,
+            mimeType: "application/json",
+            text: JSON.stringify({ error: "Not authenticated" }),
+          }],
+        };
+      }
+
+      try {
+        const editions = await getEditions(user, briefingId as string, 1);
+        if (editions.length === 0) {
+          return {
+            contents: [{
+              uri: uri.href,
+              mimeType: "application/json",
+              text: JSON.stringify({
+                briefingId,
+                edition: null,
+                message: "No editions available yet. The first edition will be generated on the next scheduled run.",
+              }),
+            }],
+          };
+        }
+
+        const latestEdition = editions[0];
+        const content = await getEditionContent(user, latestEdition.id);
+        return {
+          contents: [{
+            uri: uri.href,
+            mimeType: "application/json",
+            text: JSON.stringify({
+              briefingId,
+              editionId: latestEdition.id,
+              generatedAt: latestEdition.generatedAt,
+              content,
+            }, null, 2),
+          }],
+        };
+      } catch (error: unknown) {
+        const message = error instanceof Error ? error.message : String(error);
+        logger.error("resource briefing-latest-edition failed", {
+          error: message,
+          userId: user.id,
+          briefingId,
+        });
+        return {
+          contents: [{
+            uri: uri.href,
+            mimeType: "application/json",
+            text: JSON.stringify({ error: `Failed to fetch latest edition: ${message}` }),
+          }],
+        };
+      }
+    }
+  );
+
+  // 4. Static resource: user profile
+  server.resource(
+    "user-profile",
+    "protime://profile",
+    { description: "Current user profile including id, email, display name, tier, and account creation date" },
+    async (uri) => {
+      const user = requireUser(getUser);
+      if (!user) {
+        return {
+          contents: [{
+            uri: uri.href,
+            mimeType: "application/json",
+            text: JSON.stringify({ error: "Not authenticated" }),
+          }],
+        };
+      }
+
+      return {
+        contents: [{
+          uri: uri.href,
+          mimeType: "application/json",
+          text: JSON.stringify({
+            id: user.id,
+            email: user.email,
+            displayName: user.displayName,
+            tier: user.tier,
+            createdAt: user.createdAt.toISOString(),
+          }, null, 2),
+        }],
+      };
     }
   );
 
