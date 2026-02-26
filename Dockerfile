@@ -4,22 +4,22 @@ FROM node:20-alpine
 # Set working directory
 WORKDIR /app
 
-# Copy package files
+# Copy package files and build script
 COPY package*.json ./
+COPY build.mjs ./
 
-# Install dependencies
-RUN npm ci --only=production
+# Install all dependencies (need esbuild for build step)
+RUN npm ci
 
-# Copy TypeScript config and source code
-COPY tsconfig.json ./
+# Copy source code
 COPY src ./src
 
-# Build TypeScript
+# Build with esbuild (fast, no OOM issues)
 RUN npm run build
 
 # Remove dev dependencies and source files
 RUN npm prune --production && \
-    rm -rf src tsconfig.json
+    rm -rf src build.mjs tsconfig.json
 
 # Expose port (Cloud Run will inject PORT env var)
 EXPOSE 8080

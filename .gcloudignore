@@ -43,7 +43,9 @@ docs/
 !README.md
 
 # Service account keys (never upload!)
-*.json
-!package.json
-!tsconfig.json
-!jest.config.js
+serviceAccountKey*.json
+service-account*.json
+*.key.json
+
+# MCP config (contains credentials)
+.mcp.json
