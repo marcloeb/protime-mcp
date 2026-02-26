@@ -267,7 +267,7 @@ async function runHttpMode(): Promise<void> {
 
     // Redirect to Protime web app authentication, forwarding state so it
     // round-trips back to us in the callback
-    const protimeAuthUrl = new URL('https://protime.ai/auth/connect');
+    const protimeAuthUrl = new URL('https://protime.ai/en/auth/connect');
     protimeAuthUrl.searchParams.set('callback', callbackUrl);
     protimeAuthUrl.searchParams.set('state', state);
     if (scope) protimeAuthUrl.searchParams.set('scope', scope);
