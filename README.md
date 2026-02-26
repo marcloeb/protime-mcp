@@ -1,367 +1,196 @@
-# Protime MCP Server for ChatGPT
+# Protime MCP Server
 
-OpenAI Apps SDK integration for Protime - bringing AI-powered briefings to ChatGPT's 800 million users.
+Multi-platform MCP server that connects Protime's AI briefings to Claude, ChatGPT, and messaging platforms.
 
-## Overview
-
-This MCP (Model Context Protocol) server exposes Protime's briefing capabilities to ChatGPT, allowing users to:
-- Create topic briefings through natural conversation
-- Configure sources and schedules conversationally
-- View briefing editions directly in ChatGPT
-- Get personalized AI summaries without leaving ChatGPT
+**Live**: https://mcp.protime.ai
 
 ## Architecture
 
 ```
-ChatGPT → MCP Server (Cloud Run) → Firebase Backend → summi-cloud (Python)
+                     Protime MCP Server
+                   (Cloud Run + stdio)
+                          |
+      ┌──────────┬───────┴───────┬──────────┐
+      |          |               |          |
+ Claude Code  Claude Cowork   ChatGPT   OpenClaw
+ (stdio)      (HTTP+OAuth)   (HTTP+OAuth) (Phase 3)
 ```
 
-- **MCP Server**: Node.js/TypeScript server exposing tools via Model Context Protocol
-- **Deployment**: Google Cloud Run (serverless, auto-scaling)
-- **Authentication**: OAuth 2.0 flow linking ChatGPT users to Protime accounts
-- **Backend**: Existing Protime Firebase infrastructure (mnl-front + summi-cloud)
+- **MCP Protocol**: `@modelcontextprotocol/sdk` v1.27.1
+- **Transports**: stdio (local) + Streamable HTTP (remote)
+- **Auth**: OAuth 2.0 with PKCE for remote clients, env vars for stdio
+- **Data**: Firestore subcollections (`users/{uid}/briefings/{bid}/editions/{eid}`)
+- **Deploy**: Cloud Run europe-west3, custom domain via Global LB
 
-## Prerequisites
+## 14 Tools
 
-- Node.js 20+
-- Google Cloud SDK
-- Firebase project access (protime-summi)
-- OpenAI ChatGPT Apps SDK credentials
+**Discovery (onboarding)**
+1. `discover_topics` — multi-round topic refinement (0-3 levels)
+2. `discover_sources` — auto-discover newsletters, RSS, YouTube, Google Search
+3. `create_briefing_from_discovery` — create briefing from discovery session
+
+**Briefing management**
+4. `create_briefing` — quick-create by topic
+5. `get_briefings` — list all briefings
+6. `get_briefing_config` — detailed config (sources, schedule, stats)
+7. `update_briefing` — modify sources, schedule, categories
+8. `delete_briefing` — archive a briefing
+
+**Content**
+9. `get_editions` — list past editions
+10. `get_edition_content` — full edition with summaries by category
+11. `get_briefing_summary` — latest edition in short/detailed/bullets format
+
+**Search & interactive**
+12. `suggest_sources` — curated newsletter/RSS recommendations
+13. `search_briefing_content` — keyword search across editions
+14. `chat_with_content` — ask questions about edition content
+
+## 4 MCP Resources
+
+```
+protime://briefings                        — list all briefings
+protime://briefings/{briefingId}           — briefing config
+protime://briefings/{briefingId}/latest    — latest edition content
+protime://profile                          — user profile and tier
+```
 
 ## Quick Start
 
-### 1. Install Dependencies
+### Claude Desktop / Claude Code (stdio)
 
-```bash
-npm install
-```
+Add to your MCP config (`.mcp.json` or `claude_desktop_config.json`):
 
-### 2. Configure Environment
-
-```bash
-cp .env.example .env
-# Edit .env with your credentials
-```
-
-Required environment variables:
-```bash
-# Server
-PORT=8080
-NODE_ENV=development
-
-# Firebase
-FIREBASE_PROJECT_ID=protime-summi
-FIREBASE_SERVICE_ACCOUNT_KEY_PATH=./service-account-key.json
-
-# ChatGPT OAuth
-CHATGPT_CLIENT_ID=your_client_id
-CHATGPT_CLIENT_SECRET=your_client_secret
-OAUTH_CALLBACK_URL=http://localhost:8080/auth/callback
-
-# Security
-SESSION_SECRET=your_32_char_secret
-JWT_SECRET=your_32_char_secret
-```
-
-### 3. Run Locally
-
-```bash
-npm run dev
-```
-
-Server runs on `http://localhost:8080`
-
-### 4. Test in ChatGPT Developer Mode
-
-1. Open ChatGPT Settings → Apps → Developer Mode
-2. Add server URL: `http://localhost:8080`
-3. Test tool invocations
-
-## MCP Tools
-
-### `create_briefing`
-Create a new topic briefing
-
-**Input:**
 ```json
 {
-  "topic": "AI regulations",
-  "description": "Track EU AI Act updates"
-}
-```
-
-**Output:**
-```json
-{
-  "briefing": {
-    "id": "uuid",
-    "topic": "AI regulations",
-    "schedule": "weekly",
-    "active": true
+  "mcpServers": {
+    "protime": {
+      "command": "node",
+      "args": ["dist/index.js", "--stdio"],
+      "cwd": "/path/to/protime-mcp",
+      "env": {
+        "STDIO_USER_ID": "your-firebase-uid",
+        "STDIO_USER_EMAIL": "you@example.com",
+        "STDIO_USER_TIER": "pro",
+        "FIREBASE_PROJECT_ID": "protime-summi",
+        "FIREBASE_SERVICE_ACCOUNT_KEY_PATH": "/path/to/serviceAccountKey.json"
+      }
+    }
   }
 }
 ```
 
-### `get_briefings`
-List all user's briefings
-
-**Input:**
-```json
-{
-  "limit": 10,
-  "offset": 0
-}
-```
-
-### `get_briefing_config`
-Get detailed briefing configuration
-
-**Input:**
-```json
-{
-  "briefingId": "uuid"
-}
-```
-
-### `update_briefing`
-Modify briefing settings
-
-**Input:**
-```json
-{
-  "briefingId": "uuid",
-  "settings": {
-    "schedule": "daily",
-    "sources": ["https://example.com/feed"],
-    "categories": ["Product", "Research"]
-  }
-}
-```
-
-### `get_editions`
-Fetch past briefing editions
-
-**Input:**
-```json
-{
-  "briefingId": "uuid",
-  "limit": 10
-}
-```
-
-### `get_edition_content`
-Read specific edition with full content
-
-**Input:**
-```json
-{
-  "editionId": "uuid"
-}
-```
-
-### `suggest_sources`
-Get newsletter/RSS recommendations
-
-**Input:**
-```json
-{
-  "topic": "climate tech",
-  "limit": 5
-}
-```
-
-### `delete_briefing`
-Delete a briefing
-
-**Input:**
-```json
-{
-  "briefingId": "uuid"
-}
-```
-
-## Deployment
-
-### Deploy to Google Cloud Run
-
-#### Staging
-
+Or via CLI:
 ```bash
-npm run deploy:staging
+claude mcp add protime -s user -- node dist/index.js --stdio
 ```
 
-#### Production
+### Remote clients (ChatGPT, Claude Cowork)
 
-```bash
-npm run deploy:production
-```
-
-### Manual Deployment
-
-```bash
-# Build Docker image
-docker build -t gcr.io/protime-summi/protime-mcp:latest .
-
-# Push to Google Container Registry
-docker push gcr.io/protime-summi/protime-mcp:latest
-
-# Deploy to Cloud Run
-gcloud run deploy protime-mcp-prod \
-  --image gcr.io/protime-summi/protime-mcp:latest \
-  --region europe-west3 \
-  --platform managed \
-  --allow-unauthenticated \
-  --set-env-vars NODE_ENV=production \
-  --min-instances 1 \
-  --max-instances 100 \
-  --memory 512Mi \
-  --cpu 1
-```
+OAuth 2.0 flow via `https://mcp.protime.ai`:
+- Discovery: `GET /.well-known/oauth-authorization-server`
+- Login: `GET /auth/login` (with PKCE challenge)
+- Token: `POST /auth/token` (exchange code for JWT)
+- MCP: `POST /mcp` (with Bearer token)
 
 ## Development
 
-### Project Structure
-
-```
-src/
-├── index.ts              # Server entry point
-├── tools/                # MCP tool definitions
-├── handlers/             # Business logic
-│   ├── briefings.ts     # Briefing CRUD operations
-│   ├── editions.ts      # Edition viewing
-│   └── sources.ts       # Source discovery
-├── api/                  # External services
-│   └── firebase.ts      # Firebase Admin SDK
-├── auth/                 # Authentication
-│   └── oauth.ts         # OAuth strategy
-├── schemas/              # Validation schemas
-│   └── tools.ts         # Zod schemas
-├── types/                # TypeScript types
-│   ├── briefing.ts
-│   └── user.ts
-├── utils/                # Utilities
-│   ├── logger.ts
-│   └── errors.ts
-└── middleware/           # Express middleware
+```bash
+npm install          # Install dependencies
+npm run build        # Build with esbuild (instant)
+npm run dev          # Dev server with hot reload (tsx)
+npm run typecheck    # Type check only (needs 8GB heap, optional)
+npm test             # Run tests
 ```
 
-### Running Tests
+### Build
+
+Uses **esbuild** instead of tsc for compilation. The MCP SDK's deep Zod type inference causes tsc to OOM. Type checking is available separately via `npm run typecheck`.
+
+## Deployment
 
 ```bash
-# Unit tests
-npm test
-
-# Watch mode
-npm run test:watch
-
-# Coverage
-npm run test:coverage
+npm run deploy:staging     # Deploy to Cloud Run staging
+npm run deploy:production  # Deploy to Cloud Run production
 ```
 
-### Code Quality
+### Infrastructure
 
-```bash
-# Lint
-npm run lint
+| Component | Details |
+|-----------|---------|
+| Cloud Run | `protime-mcp-staging` in europe-west3 |
+| Custom domain | `mcp.protime.ai` via Global External HTTPS LB |
+| SSL | Managed cert `cert-mcp-protime` (auto-renewed) |
+| Secrets | `jwt-secret`, `session-secret` in Secret Manager |
+| Artifact Registry | `protime-mcp` repo in europe-west3 |
+| LB | `lb-api-protime` (shared with api.protime.ai) |
+| NEG | `neg-protime-mcp` → Cloud Run service |
+| Backend service | `bg-protime-mcp` on the LB |
 
-# Format
-npm run format
+### Environment Variables
 
-# Type check
-npm run build
+| Variable | Required | Description |
+|----------|----------|-------------|
+| `FIREBASE_PROJECT_ID` | Yes | Firebase project (protime-summi) |
+| `FIREBASE_SERVICE_ACCOUNT_KEY_PATH` | Stdio only | Path to service account JSON |
+| `JWT_SECRET` | HTTP mode | Secret for signing JWT tokens |
+| `SESSION_SECRET` | HTTP mode | Secret for session management |
+| `OAUTH_CALLBACK_URL` | HTTP mode | OAuth callback URL |
+| `STDIO_USER_ID` | Stdio only | Firebase UID for local user |
+| `STDIO_USER_EMAIL` | Stdio only | Email for local user |
+| `STDIO_USER_TIER` | Stdio only | Tier: free/pro/business |
+| `PORT` | No | Server port (default 8080) |
+| `NODE_ENV` | No | Environment (default development) |
+
+## Auth
+
+### Stdio mode (developers)
+User identity from env vars. Requires service account key for Firestore access.
+
+### HTTP mode (OAuth 2.0 with PKCE)
+1. Client redirects to `/auth/login` with PKCE code_challenge
+2. User authenticates at Protime (Firebase Auth)
+3. Callback stores authorization code in Firestore (10-min TTL)
+4. Client exchanges code + code_verifier for JWT access token (7d) + refresh token (30d)
+5. Refresh tokens rotate on use, revocable via `/auth/logout`
+
+## Project Structure
+
+```
+protime-mcp/
+├── src/
+│   ├── index.ts              # Dual transport (stdio + HTTP), OAuth routes
+│   ├── server.ts             # MCP server factory (14 tools + 4 resources)
+│   ├── api/firebase.ts       # Firebase Admin + subcollection helpers
+│   ├── handlers/
+│   │   ├── briefings.ts      # CRUD via Firestore subcollections
+│   │   ├── editions.ts       # Edition retrieval
+│   │   ├── sources.ts        # Source suggestions
+│   │   └── discovery.ts      # 3-step onboarding flow
+│   ├── middleware/
+│   │   ├── auth.ts           # JWT + Firebase token auth, createJWT
+│   │   └── rateLimit.ts      # Express rate limiter
+│   ├── schemas/tools.ts      # Zod validation schemas
+│   ├── types/                # TypeScript interfaces
+│   └── utils/                # Logger (stderr in stdio), errors
+├── examples/
+│   └── claude_desktop_config.json
+├── build.mjs                 # esbuild script
+├── Dockerfile                # Cloud Run (node:20-alpine)
+├── cloudbuild.yaml           # Google Cloud Build
+└── .env.example              # Environment template
 ```
 
-## OAuth Flow
+## Implementation History
 
-1. User invokes Protime in ChatGPT
-2. MCP server redirects to Protime OAuth page
-3. User logs in (or creates Protime account)
-4. User grants ChatGPT permissions
-5. OAuth callback returns auth code
-6. MCP exchanges code for access token
-7. Store ChatGPT user ↔ Protime user mapping
-8. Return to ChatGPT with authenticated session
+| Phase | Commit | What |
+|-------|--------|------|
+| Phase 1 | `8e3cbc7` | MCP server with 14 tools, dual transport (stdio + HTTP) |
+| Phase 2 | `21f8f52` | OAuth flow, MCP Resources, Firestore subcollection fix |
+| Phase 2b | `3d5602b` | Deploy to Cloud Run, custom domain mcp.protime.ai |
+| Phase 2b | TODO | OAuth consent page in mnl-front |
+| Phase 3 | TODO | OpenClaw messaging gateway (WhatsApp, Telegram) |
 
-## Monitoring
+## Concept Document
 
-### Logs
-
-```bash
-# View Cloud Run logs
-gcloud run logs read protime-mcp-prod --region europe-west3
-
-# Follow logs
-gcloud run logs tail protime-mcp-prod --region europe-west3
-```
-
-### Metrics
-
-View in Google Cloud Console:
-- Request count and latency
-- Error rates
-- Instance count
-- Memory/CPU usage
-
-### Alerts
-
-Configure alerts for:
-- Error rate > 5%
-- Latency p95 > 3s
-- OAuth failures > 50/10min
-- Instance count > 80
-
-## Security
-
-### Authentication
-- OAuth 2.0 for ChatGPT → Protime user linking
-- Firebase Auth tokens for API calls
-- JWT for session management
-
-### Authorization
-- All tools verify user ownership of resources
-- Tier-based access control (free vs. pro)
-- Rate limiting per user
-
-### Input Validation
-- Zod schemas validate all inputs
-- Firestore security rules enforce backend permissions
-- SQL injection prevention (using Firestore SDK)
-
-## Troubleshooting
-
-### OAuth failures
-```bash
-# Check credentials
-echo $CHATGPT_CLIENT_ID
-echo $CHATGPT_CLIENT_SECRET
-
-# Verify callback URL matches ChatGPT configuration
-```
-
-### Firebase connection errors
-```bash
-# Verify service account
-gcloud auth application-default print-access-token
-
-# Check Firestore access
-firebase firestore:get /briefings/test-id
-```
-
-### Cloud Run deployment issues
-```bash
-# Check build logs
-gcloud builds list --limit=5
-
-# View service details
-gcloud run services describe protime-mcp-prod --region europe-west3
-```
-
-## Support
-
-- **Documentation**: `/docs` folder
-- **Issues**: GitHub Issues
-- **Email**: marc@protime.ai
-
-## License
-
-MIT License - See LICENSE file for details
+Full strategy, architecture, and roadmap: [`docs/PROTIME_MCP_CONCEPT.md`](../docs/PROTIME_MCP_CONCEPT.md)
