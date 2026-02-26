@@ -5,6 +5,10 @@ import winston from 'winston';
 const logLevel = process.env.LOG_LEVEL || 'info';
 const nodeEnv = process.env.NODE_ENV || 'development';
 
+// In stdio mode, MCP uses stdout for JSON-RPC messages,
+// so all logging MUST go to stderr to avoid corrupting the protocol stream.
+const isStdioMode = process.argv.includes('--stdio');
+
 const logger = winston.createLogger({
   level: logLevel,
   format: winston.format.combine(
@@ -18,8 +22,8 @@ const logger = winston.createLogger({
     environment: nodeEnv,
   },
   transports: [
-    // Console transport with colors for development
     new winston.transports.Console({
+      stderrLevels: isStdioMode ? ['error', 'warn', 'info', 'debug'] : [],
       format: winston.format.combine(
         winston.format.colorize(),
         winston.format.printf(({ level, message, timestamp, ...metadata }) => {

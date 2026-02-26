@@ -41,6 +41,7 @@ try {
 
 export const firestore = getFirestore(app);
 export const auth = getAuth(app);
+export const adminAuth = getAuth(app);
 
 // Firestore collection references
 export const collections = {

@@ -76,7 +76,7 @@ export async function discoverTopics(
   logger.info('Discovering topics', { userId: user.id, topics, options });
 
   // Get user's Firebase ID token
-  const idToken = await getUserIdToken(user.firebaseUid);
+  const idToken = await getUserIdToken(user.firebaseUid || user.id);
 
   // Call discoverTopics Cloud Function
   const response = await axios.post(
@@ -126,7 +126,7 @@ export async function discoverSources(
   logger.info('Discovering sources', { userId: user.id, sessionId });
 
   // Get user's Firebase ID token
-  const idToken = await getUserIdToken(user.firebaseUid);
+  const idToken = await getUserIdToken(user.firebaseUid || user.id);
 
   // Call discoverSources Cloud Function
   const response = await axios.post(
@@ -178,7 +178,7 @@ export async function createBriefingFromDiscovery(
   logger.info('Creating briefing from discovery', { userId: user.id, sessionId, options });
 
   // Get user's Firebase ID token
-  const idToken = await getUserIdToken(user.firebaseUid);
+  const idToken = await getUserIdToken(user.firebaseUid || user.id);
 
   // Call createBriefingFromDiscovery Cloud Function
   const response = await axios.post(
@@ -218,7 +218,7 @@ export async function getDiscoverySession(
   logger.debug('Fetching discovery session', { sessionId, userId: user.id });
 
   const doc = await collections.users
-    .doc(user.firebaseUid)
+    .doc(user.firebaseUid || user.id)
     .collection('discoverySessions')
     .doc(sessionId)
     .get();
@@ -230,7 +230,7 @@ export async function getDiscoverySession(
   const data = doc.data();
 
   // Verify ownership (should match from path, but double-check)
-  if (data!.userId !== user.firebaseUid) {
+  if (data!.userId !== (user.firebaseUid || user.id)) {
     throw new AuthorizationError('You do not have access to this discovery session');
   }
 

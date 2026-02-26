@@ -6,6 +6,7 @@ export interface User {
   displayName?: string;
   photoURL?: string;
   tier: 'free' | 'pro' | 'enterprise';
+  firebaseUid?: string;
   createdAt: Date;
   updatedAt: Date;
 }
