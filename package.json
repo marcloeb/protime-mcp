@@ -1,7 +1,7 @@
 {
   "name": "protime-mcp-server",
   "version": "1.0.0",
-  "description": "Protime MCP Server for ChatGPT Apps SDK",
+  "description": "Protime MCP Server — AI briefings for Claude, ChatGPT, WhatsApp, Telegram & more",
   "main": "dist/index.js",
   "type": "module",
   "scripts": {
@@ -16,7 +16,7 @@
     "deploy:production": "gcloud run deploy protime-mcp-prod --source . --region europe-west3 --platform managed --allow-unauthenticated --set-env-vars NODE_ENV=production,FIREBASE_PROJECT_ID=protime-summi --set-secrets JWT_SECRET=jwt-secret:latest,SESSION_SECRET=session-secret:latest --min-instances 1 --max-instances 100 --cpu 2 --memory 1Gi --project protime-summi",
     "deploy:build": "gcloud builds submit --config=cloudbuild.yaml --region=europe-west3 --project=protime-summi"
   },
-  "keywords": ["mcp", "chatgpt", "protime", "briefings", "ai"],
+  "keywords": ["mcp", "chatgpt", "claude", "cowork", "protime", "briefings", "ai", "whatsapp", "telegram"],
   "author": "Marc Loeb <marc@protime.ai>",
   "license": "MIT",
   "dependencies": {
