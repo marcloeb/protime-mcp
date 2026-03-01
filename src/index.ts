@@ -209,6 +209,7 @@ async function runHttpMode(): Promise<void> {
       issuer: baseUrl,
       authorization_endpoint: `${baseUrl}/auth/login`,
       token_endpoint: `${baseUrl}/auth/token`,
+      registration_endpoint: `${baseUrl}/auth/register`,
       scopes_supported: ['briefings:read', 'briefings:write'],
       response_types_supported: ['code'],
       grant_types_supported: ['authorization_code', 'refresh_token'],
@@ -244,6 +245,55 @@ async function runHttpMode(): Promise<void> {
       }
     }
   }, 15 * 60 * 1000);
+
+  // POST /auth/register — Dynamic Client Registration (RFC 7591)
+  // Claude.ai uses this to register itself as an OAuth client automatically.
+  const oauthClients = firestore.collection('oauthClients');
+
+  app.post('/auth/register', async (req: Request, res: Response) => {
+    const {
+      client_name,
+      redirect_uris,
+      grant_types,
+      response_types,
+      token_endpoint_auth_method,
+      scope,
+    } = req.body;
+
+    if (!client_name || !redirect_uris || !Array.isArray(redirect_uris) || redirect_uris.length === 0) {
+      res.status(400).json({
+        error: 'invalid_client_metadata',
+        error_description: 'client_name and redirect_uris are required',
+      });
+      return;
+    }
+
+    const clientId = randomUUID();
+
+    const clientData = {
+      client_id: clientId,
+      client_name,
+      redirect_uris,
+      grant_types: grant_types || ['authorization_code', 'refresh_token'],
+      response_types: response_types || ['code'],
+      token_endpoint_auth_method: token_endpoint_auth_method || 'none',
+      scope: scope || 'briefings:read briefings:write',
+      client_id_issued_at: Math.floor(Date.now() / 1000),
+    };
+
+    await oauthClients.doc(clientId).set({
+      ...clientData,
+      createdAt: new Date(),
+    });
+
+    logger.info('OAuth client registered (DCR)', {
+      clientId: clientId.substring(0, 8) + '...',
+      clientName: client_name,
+      redirectUris: redirect_uris,
+    });
+
+    res.status(201).json(clientData);
+  });
 
   // GET /auth/login — Redirect user to Protime's authentication page
   app.get('/auth/login', (req: Request, res: Response) => {
