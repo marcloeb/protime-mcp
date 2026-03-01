@@ -1,0 +1,8 @@
+{
+  "name": "protime",
+  "version": "1.0.0",
+  "description": "Your AI secretary that reads everything so you don't have to. Track any topic, discover relevant sources automatically, and get daily briefings with priorities and action items.",
+  "author": {
+    "name": "Protime"
+  }
+}
