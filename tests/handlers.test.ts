@@ -84,16 +84,17 @@ describe('Briefing Handlers', () => {
     it('should return empty array for user with no briefings', async () => {
       const result = await getBriefings(mockUser);
 
-      expect(Array.isArray(result)).toBe(true);
-      expect(result.length).toBe(0);
+      expect(Array.isArray(result.briefings)).toBe(true);
+      expect(result.briefings.length).toBe(0);
+      expect(result.total).toBe(0);
     });
 
     it('should respect limit parameter', async () => {
       const result = await getBriefings(mockUser, 5);
 
-      expect(Array.isArray(result)).toBe(true);
+      expect(Array.isArray(result.briefings)).toBe(true);
       // With mocked data, we get empty array
-      expect(result.length).toBeLessThanOrEqual(5);
+      expect(result.briefings.length).toBeLessThanOrEqual(5);
     });
   });
 });

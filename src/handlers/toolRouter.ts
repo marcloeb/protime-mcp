@@ -79,7 +79,7 @@ export async function handleToolCall(
 
     case 'get_briefings': {
       const validated = GetBriefingsSchema.parse(input);
-      const briefings = await getBriefings(user, validated.limit, validated.offset);
+      const { briefings, total } = await getBriefings(user, validated.limit, validated.offset);
       return {
         briefings: briefings.map(b => ({
           id: b.id,
@@ -90,7 +90,7 @@ export async function handleToolCall(
           sourceCount: b.sources.length,
           lastRunAt: b.lastRunAt?.toISOString(),
         })),
-        total: briefings.length,
+        total,
       };
     }
 

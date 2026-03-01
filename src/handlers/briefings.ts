@@ -71,13 +71,18 @@ export async function getBriefings(
   user: User,
   limit: number = 10,
   offset: number = 0
-): Promise<Briefing[]> {
+): Promise<{ briefings: Briefing[]; total: number }> {
   logger.debug('Fetching briefings', { userId: user.id, limit, offset });
 
   const briefingsRef = userBriefings(user.id);
 
-  // Fetch all briefings (including archived), sorted client-side
+  // Get total count first
+  const countSnapshot = await briefingsRef.count().get();
+  const total = countSnapshot.data().count;
+
+  // Fetch briefings with offset support via Firestore offset()
   const snapshot = await briefingsRef
+    .offset(offset)
     .limit(limit)
     .get();
 
@@ -102,9 +107,9 @@ export async function getBriefings(
     } as Briefing;
   });
 
-  logger.debug('Fetched briefings', { count: briefings.length });
+  logger.debug('Fetched briefings', { count: briefings.length, total });
 
-  return briefings;
+  return { briefings, total };
 }
 
 export async function getBriefingConfig(
@@ -185,6 +190,90 @@ export async function updateBriefing(
   await briefingRef.update(updateData);
 
   logger.info('Briefing updated', { briefingId });
+}
+
+export async function addSources(
+  user: User,
+  briefingId: string,
+  urls: string[]
+): Promise<{ added: number; duplicates: number; sources: Array<{ id: string; type: string; url: string; name: string; active: boolean }> }> {
+  logger.info('Adding sources to briefing', { briefingId, userId: user.id, urlCount: urls.length });
+
+  const briefingRef = userBriefings(user.id).doc(briefingId);
+  const doc = await briefingRef.get();
+
+  if (!doc.exists) {
+    throw new NotFoundError('Briefing');
+  }
+
+  const data = doc.data()!;
+  const existingSources: Array<{ id: string; type: string; url: string; name: string; active: boolean }> = data.sources || [];
+  const existingUrls = new Set(existingSources.map((s) => s.url.toLowerCase()));
+
+  const newSources: Array<{ id: string; type: string; url: string; name: string; active: boolean }> = [];
+  let duplicates = 0;
+
+  for (const url of urls) {
+    if (existingUrls.has(url.toLowerCase())) {
+      duplicates++;
+      continue;
+    }
+    existingUrls.add(url.toLowerCase());
+    newSources.push({
+      id: userBriefings(user.id).doc().id,
+      type: url.includes('/feed') || url.includes('/rss') ? 'rss' : 'newsletter',
+      url,
+      name: extractNameFromUrl(url),
+      active: true,
+    });
+  }
+
+  if (newSources.length > 0) {
+    const allSources = [...existingSources, ...newSources];
+    await briefingRef.update({
+      sources: allSources,
+      updatedAt: new Date().toISOString(),
+    });
+  }
+
+  logger.info('Sources added', { briefingId, added: newSources.length, duplicates });
+
+  return {
+    added: newSources.length,
+    duplicates,
+    sources: newSources,
+  };
+}
+
+export async function selectBriefings(
+  user: User,
+  briefingIds: string[]
+): Promise<{ activated: string[]; deactivated: string[] }> {
+  logger.info('Selecting briefings', { userId: user.id, selectedCount: briefingIds.length });
+
+  const briefingsRef = userBriefings(user.id);
+  const snapshot = await briefingsRef.get();
+
+  const selectedSet = new Set(briefingIds);
+  const activated: string[] = [];
+  const deactivated: string[] = [];
+
+  for (const doc of snapshot.docs) {
+    const shouldBeActive = selectedSet.has(doc.id);
+    const isCurrentlyArchived = doc.data().archived === true;
+
+    if (shouldBeActive && isCurrentlyArchived) {
+      await doc.ref.update({ archived: false, updatedAt: new Date().toISOString() });
+      activated.push(doc.id);
+    } else if (!shouldBeActive && !isCurrentlyArchived) {
+      await doc.ref.update({ archived: true, updatedAt: new Date().toISOString() });
+      deactivated.push(doc.id);
+    }
+  }
+
+  logger.info('Briefings selected', { activated: activated.length, deactivated: deactivated.length });
+
+  return { activated, deactivated };
 }
 
 export async function deleteBriefing(

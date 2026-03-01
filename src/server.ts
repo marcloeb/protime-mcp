@@ -18,6 +18,8 @@ import {
   getBriefingConfig,
   updateBriefing,
   deleteBriefing,
+  addSources,
+  selectBriefings,
 } from "./handlers/briefings.js";
 import { getEditions, getEditionContent } from "./handlers/editions.js";
 import { suggestSources } from "./handlers/sources.js";
@@ -308,7 +310,7 @@ export function createMcpServer(getUser: () => User | null): McpServer {
       if (!user) return errorContent("Not authenticated");
 
       try {
-        const briefings = await getBriefings(user, args.limit, args.offset);
+        const { briefings, total } = await getBriefings(user, args.limit, args.offset);
         return jsonContent({
           briefings: briefings.map((b) => ({
             id: b.id,
@@ -319,7 +321,7 @@ export function createMcpServer(getUser: () => User | null): McpServer {
             sourceCount: b.sources.length,
             lastRunAt: b.lastRunAt?.toISOString(),
           })),
-          total: briefings.length,
+          total,
         });
       } catch (error: unknown) {
         const message = error instanceof Error ? error.message : String(error);
@@ -420,6 +422,82 @@ export function createMcpServer(getUser: () => User | null): McpServer {
         const message = error instanceof Error ? error.message : String(error);
         logger.error("delete_briefing failed", { error: message, userId: user.id });
         return errorContent(`Failed to delete briefing: ${message}`);
+      }
+    }
+  );
+
+  // =========================================================================
+  // Source Management (1 tool)
+  // =========================================================================
+
+  server.tool(
+    "add_sources",
+    "Add newsletter or RSS feed URLs to an existing briefing. Appends new sources without removing existing ones. Duplicates are automatically skipped.",
+    {
+      briefingId: z.string().describe("The unique ID of the briefing to add sources to"),
+      urls: z
+        .array(z.string().url())
+        .min(1)
+        .describe(
+          'One or more newsletter or RSS feed URLs to add (e.g., ["https://example.com/feed", "https://newsletter.example.com"])'
+        ),
+    },
+    async (args) => {
+      const user = requireUser(getUser);
+      if (!user) return errorContent("Not authenticated");
+
+      try {
+        const result = await addSources(user, args.briefingId, args.urls);
+        return jsonContent({
+          success: true,
+          added: result.added,
+          duplicates: result.duplicates,
+          sources: result.sources,
+          message:
+            result.added > 0
+              ? `Added ${result.added} source${result.added > 1 ? "s" : ""} to your briefing.${result.duplicates > 0 ? ` ${result.duplicates} duplicate${result.duplicates > 1 ? "s" : ""} skipped.` : ""}`
+              : `All ${result.duplicates} source${result.duplicates > 1 ? "s" : ""} already exist in this briefing.`,
+        });
+      } catch (error: unknown) {
+        const message = error instanceof Error ? error.message : String(error);
+        logger.error("add_sources failed", { error: message, userId: user.id });
+        return errorContent(`Failed to add sources: ${message}`);
+      }
+    }
+  );
+
+  // =========================================================================
+  // Briefing Selection (1 tool)
+  // =========================================================================
+
+  server.tool(
+    "select_briefings",
+    "Select which briefings are active. Activates the specified briefings and deactivates all others. Use this to control which briefings generate updates.",
+    {
+      briefingIds: z
+        .array(z.string())
+        .min(1)
+        .describe("The IDs of the briefings to activate. All other briefings will be deactivated."),
+    },
+    async (args) => {
+      const user = requireUser(getUser);
+      if (!user) return errorContent("Not authenticated");
+
+      try {
+        const result = await selectBriefings(user, args.briefingIds);
+        return jsonContent({
+          success: true,
+          activated: result.activated,
+          deactivated: result.deactivated,
+          message:
+            result.activated.length > 0 || result.deactivated.length > 0
+              ? `Updated: ${result.activated.length} briefing${result.activated.length !== 1 ? "s" : ""} activated, ${result.deactivated.length} deactivated.`
+              : "No changes needed — selected briefings were already active.",
+        });
+      } catch (error: unknown) {
+        const message = error instanceof Error ? error.message : String(error);
+        logger.error("select_briefings failed", { error: message, userId: user.id });
+        return errorContent(`Failed to select briefings: ${message}`);
       }
     }
   );
@@ -609,7 +687,7 @@ export function createMcpServer(getUser: () => User | null): McpServer {
           const config = await getBriefingConfig(user, args.briefingId);
           briefings = [{ id: config.briefingId, topic: config.topic }];
         } else {
-          const allBriefings = await getBriefings(user, 50, 0);
+          const { briefings: allBriefings } = await getBriefings(user, 50, 0);
           briefings = allBriefings.map((b) => ({ id: b.id, topic: b.topic }));
         }
 
@@ -756,7 +834,7 @@ export function createMcpServer(getUser: () => User | null): McpServer {
       }
 
       try {
-        const briefings = await getBriefings(user, 50, 0);
+        const { briefings } = await getBriefings(user, 50, 0);
         const data = briefings.map((b) => ({
           id: b.id,
           topic: b.topic,

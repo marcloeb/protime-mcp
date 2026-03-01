@@ -187,7 +187,20 @@ async function runHttpMode(): Promise<void> {
     });
   });
 
-  // --- OAuth Discovery Metadata (ChatGPT) ------------------------------------
+  // --- OAuth Protected Resource Metadata (RFC 9728, MCP spec) -----------------
+  app.get('/.well-known/oauth-protected-resource', (req: Request, res: Response) => {
+    const baseUrl = process.env.OAUTH_CALLBACK_URL?.replace('/auth/callback', '') ||
+                    `https://${req.get('host')}`;
+
+    res.json({
+      resource: baseUrl,
+      authorization_servers: [baseUrl],
+      scopes_supported: ['briefings:read', 'briefings:write'],
+      bearer_methods_supported: ['header'],
+    });
+  });
+
+  // --- OAuth Authorization Server Metadata -----------------------------------
   app.get('/.well-known/oauth-authorization-server', (req: Request, res: Response) => {
     const baseUrl = process.env.OAUTH_CALLBACK_URL?.replace('/auth/callback', '') ||
                     `https://${req.get('host')}`;
@@ -658,11 +671,13 @@ async function runHttpMode(): Promise<void> {
     // --- New session: authenticate first ---
     const authHeader = req.headers.authorization;
     if (!authHeader || !authHeader.startsWith('Bearer ')) {
-      res.status(401).json({
-        jsonrpc: '2.0',
-        error: { code: -32001, message: 'Authentication required' },
-        id: null,
-      });
+      res.status(401)
+        .set('WWW-Authenticate', 'Bearer')
+        .json({
+          jsonrpc: '2.0',
+          error: { code: -32001, message: 'Authentication required' },
+          id: null,
+        });
       return;
     }
 
@@ -672,11 +687,13 @@ async function runHttpMode(): Promise<void> {
     try {
       user = await authenticateToken(token);
     } catch (error) {
-      res.status(401).json({
-        jsonrpc: '2.0',
-        error: { code: -32001, message: 'Invalid authentication token' },
-        id: null,
-      });
+      res.status(401)
+        .set('WWW-Authenticate', 'Bearer error="invalid_token"')
+        .json({
+          jsonrpc: '2.0',
+          error: { code: -32001, message: 'Invalid authentication token' },
+          id: null,
+        });
       return;
     }
 
